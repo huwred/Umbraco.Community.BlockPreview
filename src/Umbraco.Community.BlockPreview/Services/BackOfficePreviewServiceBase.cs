@@ -9,6 +9,8 @@ using Microsoft.AspNetCore.Mvc.ViewFeatures;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Options;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+using System.Reflection;
 using System.Text.Encodings.Web;
 using Umbraco.Cms.Core;
 using Umbraco.Cms.Core.Composing;
@@ -16,6 +18,7 @@ using Umbraco.Cms.Core.Models.Blocks;
 using Umbraco.Cms.Core.Models.PublishedContent;
 using Umbraco.Cms.Core.PropertyEditors;
 using Umbraco.Cms.Core.PropertyEditors.ValueConverters;
+using Umbraco.Cms.Core.Services;
 using Umbraco.Community.BlockPreview.Extensions;
 using Umbraco.Community.BlockPreview.Interfaces;
 using Umbraco.Extensions;
@@ -31,7 +34,6 @@ namespace Umbraco.Community.BlockPreview.Services
         private readonly ITypeFinder _typeFinder;
         private readonly BlockEditorConverter _blockEditorConverter;
         private readonly IViewComponentSelector _viewComponentSelector;
-        private readonly IPublishedValueFallback _publishedValueFallback;
 
         public BackOfficePreviewServiceBase(
             ITempDataProvider tempDataProvider,
@@ -40,7 +42,6 @@ namespace Umbraco.Community.BlockPreview.Services
             ITypeFinder typeFinder,
             BlockEditorConverter blockEditorConverter,
             IViewComponentSelector viewComponentSelector,
-            IPublishedValueFallback publishedValueFallback,
             IOptions<BlockPreviewOptions> options)
         {
             _tempDataProvider = tempDataProvider;
@@ -49,7 +50,6 @@ namespace Umbraco.Community.BlockPreview.Services
             _typeFinder = typeFinder;
             _blockEditorConverter = blockEditorConverter;
             _viewComponentSelector = viewComponentSelector;
-            _publishedValueFallback = publishedValueFallback;
             _options = options.Value;
         }
 
@@ -97,26 +97,36 @@ namespace Umbraco.Community.BlockPreview.Services
 
         public virtual object? CreateBlockInstance(bool isGrid, Type? contentBlockType, IPublishedElement? contentElement, Type? settingsBlockType, IPublishedElement? settingsElement, Udi? contentUdi, Udi? settingsUdi)
         {
+            bool hasSettings = settingsBlockType != null && settingsElement != null;
+
             if (contentBlockType != null)
             {
-                var contentInstance = Activator.CreateInstance(contentBlockType, contentElement, _publishedValueFallback);
-                var settingsInstance = settingsBlockType != null ? Activator.CreateInstance(settingsBlockType, settingsElement, _publishedValueFallback) : null;
+                Type blockItemType = isGrid ? typeof(BlockGridItem<>) : typeof(BlockListItem<>);
 
-                Type blockItemType;
-                if (settingsBlockType != null)
+                if (hasSettings)
                 {
-                    blockItemType = isGrid
-                        ? typeof(BlockGridItem<,>).MakeGenericType(contentBlockType, settingsBlockType)
-                        : typeof(BlockListItem<,>).MakeGenericType(contentBlockType, settingsBlockType);
-                }
-                else
-                {
-                    blockItemType = isGrid
-                        ? typeof(BlockGridItem<>).MakeGenericType(contentBlockType)
-                        : typeof(BlockListItem<>).MakeGenericType(contentBlockType);
+                    blockItemType = isGrid ? typeof(BlockGridItem<,>) : typeof(BlockListItem<,>);
                 }
 
-                return Activator.CreateInstance(blockItemType, contentUdi, contentInstance, settingsUdi, settingsInstance);
+                Type blockElementType = !hasSettings ? blockItemType.MakeGenericType(contentBlockType) : blockItemType.MakeGenericType(contentBlockType, settingsBlockType!);
+
+                ConstructorInfo? ctor = blockElementType.GetConstructor(new[]
+                {
+                    typeof(Udi),
+                    contentBlockType,
+                    typeof(Udi),
+                    settingsElement != null ? settingsBlockType : typeof(IPublishedElement)
+                });
+
+                object blockGridItemInstance = ctor!.Invoke(new object[]
+                {
+                    contentUdi!,
+                    contentElement!,
+                    settingsUdi!,
+                    settingsElement!
+                });
+
+                return blockGridItemInstance;
             }
 
             return null;
@@ -195,9 +205,8 @@ namespace Umbraco.Community.BlockPreview.Services
         }
 
         public virtual async Task<string> GetMarkupForBlock(
-            IPublishedContent page,
             BlockValue blockValue,
-            string blockEditorAlias,
+            string dataTypeKey,
             ControllerContext controllerContext,
             string? culture)
         {

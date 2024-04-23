@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc.Razor;
 using Microsoft.AspNetCore.Mvc.ViewComponents;
 using Microsoft.AspNetCore.Mvc.ViewFeatures;
 using Microsoft.Extensions.Options;
+using Newtonsoft.Json.Linq;
 using Umbraco.Cms.Core.Composing;
 using Umbraco.Cms.Core.Models.Blocks;
 using Umbraco.Cms.Core.Models.PublishedContent;
@@ -20,19 +21,17 @@ namespace Umbraco.Community.BlockPreview.Services
             ContextCultureService contextCultureService,
             ITempDataProvider tempDataProvider,
             ITypeFinder typeFinder,
-            IPublishedValueFallback publishedValueFallback,
             IViewComponentHelperWrapper viewComponentHelperWrapper,
             IViewComponentSelector viewComponentSelector,
             IOptions<BlockPreviewOptions> options,
-            IRazorViewEngine razorViewEngine) : base(tempDataProvider, viewComponentHelperWrapper, razorViewEngine, typeFinder, blockEditorConverter, viewComponentSelector, publishedValueFallback, options)
+            IRazorViewEngine razorViewEngine) : base(tempDataProvider, viewComponentHelperWrapper, razorViewEngine, typeFinder, blockEditorConverter, viewComponentSelector, options)
         {            
             _contextCultureService = contextCultureService;
         }
 
         public override async Task<string> GetMarkupForBlock(
-            IPublishedContent page,
             BlockValue blockValue,
-            string blockEditorAlias,
+            string dataTypeKey,
             ControllerContext controllerContext,
             string? culture)
         {
@@ -43,19 +42,20 @@ namespace Umbraco.Community.BlockPreview.Services
 
             BlockItemData? contentData = blockValue.ContentData.FirstOrDefault();
             BlockItemData? settingsData = blockValue.SettingsData.FirstOrDefault();
+            KeyValuePair<string, JToken>? layoutData = blockValue.Layout.FirstOrDefault();
 
             if (contentData != null)
             {
                 ConvertNestedValuesToString(contentData);
 
                 IPublishedElement? contentElement = ConvertToElement(contentData, true);
-                string? contentTypeAlias = contentElement?.ContentType.Alias;
+                string? contentElementTypeAlias = contentElement?.ContentType.Alias;
 
                 IPublishedElement? settingsElement = settingsData != null ? ConvertToElement(settingsData, true) : default;
-                string? settingsTypeAlias = settingsElement?.ContentType.Alias;
+                string? settingsElementTypeAlias = settingsElement?.ContentType.Alias;
 
-                Type? contentBlockType = FindBlockType(contentTypeAlias);
-                Type? settingsBlockType = settingsElement != null ? FindBlockType(settingsTypeAlias) : default;
+                Type? contentBlockType = FindBlockType(contentElementTypeAlias);
+                Type? settingsBlockType = settingsElement != null ? FindBlockType(settingsElementTypeAlias) : default;
 
                 object? blockInstance = CreateBlockInstance(false, contentBlockType, contentElement, settingsBlockType, settingsElement, contentData.Udi, settingsData?.Udi);
 
@@ -63,7 +63,7 @@ namespace Umbraco.Community.BlockPreview.Services
 
                 ViewDataDictionary? viewData = CreateViewData(typedBlockInstance);
 
-                return await GetMarkup(controllerContext, contentTypeAlias, viewData);
+                return await GetMarkup(controllerContext, contentElementTypeAlias, viewData);
             }
 
             return string.Empty;

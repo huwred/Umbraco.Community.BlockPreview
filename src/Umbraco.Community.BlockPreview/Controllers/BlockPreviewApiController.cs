@@ -66,7 +66,7 @@ namespace Umbraco.Community.BlockPreview.Controllers
         public async Task<IActionResult> PreviewMarkup(
             [FromBody] BlockValue data,
             [FromQuery] int pageId = 0,
-            [FromQuery] string blockEditorAlias = "",
+            [FromQuery] string dataTypeKey = "",
             [FromQuery] bool isGrid = false,
             [FromQuery] string culture = "")
         {
@@ -74,26 +74,26 @@ namespace Umbraco.Community.BlockPreview.Controllers
 
             try
             {
-                IPublishedContent? page = null;
+                //IPublishedContent? page = null;
 
-                // If the page is new, then the ID will be zero
-                if (pageId > 0)
-                {
-                    page = GetPublishedContentForPage(pageId);
-                }
+                //// If the page is new, then the ID will be zero
+                //if (pageId > 0)
+                //{
+                //    page = GetPublishedContentForPage(pageId);
+                //}
 
-                if (page == null)
-                {
-                    return Ok("<div class=\"preview-alert preview-alert-warning\"><strong>Cannot create a preview:</strong> the page must be saved before a preview can be created</div>");
-                }
+                //if (page == null)
+                //{
+                //    return Ok("<div class=\"preview-alert preview-alert-warning\"><strong>Cannot create a preview:</strong> the page must be saved before a preview can be created</div>");
+                //}
 
-                string? currentCulture = GetCurrentCulture(page, culture);
+                //string? currentCulture = GetCurrentCulture(page, culture);
 
-                await SetupPublishedRequest(page, currentCulture);
+                //await SetupPublishedRequest(page, currentCulture);
 
                 markup = isGrid ?
-                    await _backOfficeGridPreviewService.GetMarkupForBlock(page, data, blockEditorAlias, ControllerContext, currentCulture) :
-                    await _backOfficeListPreviewService.GetMarkupForBlock(page, data, blockEditorAlias, ControllerContext, currentCulture);
+                    await _backOfficeGridPreviewService.GetMarkupForBlock(data, dataTypeKey, ControllerContext, "") :
+                    await _backOfficeListPreviewService.GetMarkupForBlock(data, dataTypeKey, ControllerContext, "");
             }
             catch (Exception ex)
             {

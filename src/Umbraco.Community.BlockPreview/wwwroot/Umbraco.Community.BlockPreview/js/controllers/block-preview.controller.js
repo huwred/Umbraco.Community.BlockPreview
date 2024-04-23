@@ -1,7 +1,7 @@
 ﻿angular.module('umbraco').controller('Umbraco.Community.BlockPreview.Controllers.BlockPreviewController',
     ['$scope', '$sce', '$timeout', 'editorState', 'Umbraco.Community.BlockPreview.Resources.PreviewResource',
         function ($scope, $sce, $timeout, editorState, previewResource) {
-            var current = editorState.getCurrent()
+            var current = editorState.getCurrent();
             var active = current.variants.find(function (v) {
                 return v.active;
             });
@@ -18,14 +18,16 @@
             $scope.loading = true;
             $scope.markup = '<div class="preview-alert preview-alert-info">Loading preview</div>';
 
+            $scope.contentTypeAlias = current.contentTypeAlias;
+
             // There must be a better way to do this...
-            $scope.blockEditorAlias = '';
+            $scope.dataTypeKey = '';
             var parent = $scope.$parent;
 
             while (parent.$parent) {
                 if (parent.vm) {
                     if (parent.vm.constructor.name == 'BlockGridController') {
-                        $scope.blockEditorAlias = parent.vm.model.editor;
+                        $scope.dataTypeKey = parent.vm.model.dataTypeKey;
                         break;
                     }
                 }
@@ -43,7 +45,7 @@
                     settingsData: [settings || $scope.block.settingsData]
                 };
 
-                previewResource.getPreview(formattedBlockData, $scope.id, $scope.blockEditorAlias, $scope.model.constructor.name == 'BlockGridBlockController', $scope.language).then(function (data) {
+                previewResource.getPreview(formattedBlockData, $scope.id, $scope.dataTypeKey, $scope.model.constructor.name == 'BlockGridBlockController', $scope.language).then(function (data) {
                     $scope.markup = $sce.trustAsHtml(data);
                     $scope.loading = false;
                 });

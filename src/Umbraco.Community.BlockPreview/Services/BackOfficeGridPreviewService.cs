@@ -4,36 +4,48 @@ using Microsoft.AspNetCore.Mvc.Razor;
 using Microsoft.AspNetCore.Mvc.ViewComponents;
 using Microsoft.AspNetCore.Mvc.ViewFeatures;
 using Microsoft.Extensions.Options;
+using Newtonsoft.Json;
 using Umbraco.Cms.Core.Composing;
 using Umbraco.Cms.Core.Models.Blocks;
 using Umbraco.Cms.Core.Models.PublishedContent;
+using Umbraco.Cms.Core.PropertyEditors;
 using Umbraco.Cms.Core.PropertyEditors.ValueConverters;
+using Umbraco.Cms.Core.Serialization;
+using Umbraco.Cms.Core.Services;
 using Umbraco.Community.BlockPreview.Interfaces;
+using Umbraco.Extensions;
 
 namespace Umbraco.Community.BlockPreview.Services
 {
     public sealed class BackOfficeGridPreviewService : BackOfficePreviewServiceBase, IBackOfficeGridPreviewService
     {
         private readonly ContextCultureService _contextCultureService;
+        private readonly IContentTypeService _contentTypeService;
+        private readonly IDataTypeService _dataTypeService;
+        private readonly IJsonSerializer _jsonSerializer;
 
         public BackOfficeGridPreviewService(
             BlockEditorConverter blockEditorConverter,
             ContextCultureService contextCultureService,
             ITempDataProvider tempDataProvider,
             ITypeFinder typeFinder,
-            IPublishedValueFallback publishedValueFallback,
             IViewComponentHelperWrapper viewComponentHelperWrapper,
             IViewComponentSelector viewComponentSelector,
             IOptions<BlockPreviewOptions> options,
-            IRazorViewEngine razorViewEngine) : base(tempDataProvider, viewComponentHelperWrapper, razorViewEngine, typeFinder, blockEditorConverter, viewComponentSelector, publishedValueFallback, options)
+            IContentTypeService contentTypeService,
+            IDataTypeService dataTypeService,
+            IJsonSerializer jsonSeralizer,
+            IRazorViewEngine razorViewEngine) : base(tempDataProvider, viewComponentHelperWrapper, razorViewEngine, typeFinder, blockEditorConverter, viewComponentSelector, options)
         {
             _contextCultureService = contextCultureService;
+            _contentTypeService = contentTypeService;
+            _dataTypeService = dataTypeService;
+            _jsonSerializer = jsonSeralizer;
         }
 
         public override async Task<string> GetMarkupForBlock(
-            IPublishedContent page,
             BlockValue blockValue,
-            string blockEditorAlias,
+            string dataTypeKey,
             ControllerContext controllerContext,
             string? culture)
         {
@@ -44,71 +56,59 @@ namespace Umbraco.Community.BlockPreview.Services
 
             BlockItemData? contentData = blockValue.ContentData.FirstOrDefault();
             BlockItemData? settingsData = blockValue.SettingsData.FirstOrDefault();
+            BlockGridLayoutItem? layoutData = JsonConvert.DeserializeObject<BlockGridLayoutItem>(JsonConvert.SerializeObject(blockValue.Layout));
 
             if (contentData != null)
             {
                 ConvertNestedValuesToString(contentData);
 
                 IPublishedElement? contentElement = ConvertToElement(contentData, true);
-                string? contentTypeAlias = contentElement?.ContentType.Alias;
+                string? contentElementTypeAlias = contentElement?.ContentType.Alias;
 
                 IPublishedElement? settingsElement = settingsData != null ? ConvertToElement(settingsData, true) : default;
-                string? settingsTypeAlias = settingsElement?.ContentType.Alias;
+                string? settingsElementTypeAlias = settingsElement?.ContentType.Alias;
 
-                Type? contentBlockType = FindBlockType(contentTypeAlias);
-                Type? settingsBlockType = settingsElement != null ? FindBlockType(settingsTypeAlias) : default;
+                Type? contentBlockType = FindBlockType(contentElementTypeAlias);
+                Type? settingsBlockType = settingsElement != null ? FindBlockType(settingsElementTypeAlias) : default;
 
                 object? blockInstance = CreateBlockInstance(true, contentBlockType, contentElement, settingsBlockType, settingsElement, contentData.Udi, settingsData?.Udi);
 
                 BlockGridItem? typedBlockInstance = blockInstance as BlockGridItem;
 
-                var contentProperty = page.Properties.FirstOrDefault(x => x.PropertyType.EditorAlias.Equals(blockEditorAlias));
+                UpdateBlockGridItem(dataTypeKey, contentElement.ContentType.Key, typedBlockInstance, layoutData);
 
-                BlockGridModel? typedBlockGridModel = contentProperty?.GetValue() as BlockGridModel;
+                ViewDataDictionary? viewData = CreateViewData(blockInstance);
 
-                UpdateBlockGridItem(typedBlockGridModel, contentData, typedBlockInstance);
-
-                ViewDataDictionary? viewData = CreateViewData(typedBlockInstance);
-
-                return await GetMarkup(controllerContext, contentTypeAlias, viewData, true);
+                return await GetMarkup(controllerContext, contentElementTypeAlias, viewData, true);
             }
 
             return string.Empty;
         }
 
-        private static void UpdateBlockGridItem(BlockGridModel? typedBlockGridModel, BlockItemData? contentData, BlockGridItem? typedBlockInstance)
+        private void UpdateBlockGridItem(string dataTypeKey, Guid contentElementTypeKey, BlockGridItem? typedBlockInstance, BlockGridLayoutItem? layoutData)
         {
-            if (typedBlockGridModel != null)
+            var dataType = _dataTypeService.GetDataType(Guid.Parse(dataTypeKey));
+            var config = dataType.ConfigurationAs<BlockGridConfiguration>();
+
+            typedBlockInstance.RowSpan = layoutData.RowSpan.GetValueOrDefault();
+            typedBlockInstance.ColumnSpan = layoutData.ColumnSpan.GetValueOrDefault();
+
+            typedBlockInstance.GridColumns = config?.GridColumns;
+
+            var blockConfig = config?.Blocks.FirstOrDefault(x => x.ContentElementTypeKey.Equals(contentElementTypeKey));
+            var blockConfigAreaMap = blockConfig.Areas.ToDictionary(area => area.Key);
+
+            typedBlockInstance.Areas = layoutData.Areas.Select(area =>
             {
-                var blockGridItem = typedBlockGridModel?.FirstOrDefault(x => x.ContentUdi == contentData?.Udi);
-
-                if (blockGridItem == null && typedBlockGridModel != null)
+                if (!blockConfigAreaMap.TryGetValue(area.Key, out BlockGridConfiguration.BlockGridAreaConfiguration? areaConfig))
                 {
-                    foreach (BlockGridItem item in typedBlockGridModel)
-                    {
-                        foreach (BlockGridArea area in item.Areas)
-                        {
-                            foreach (BlockGridItem childItem in area)
-                            {
-                                if (childItem.ContentUdi == contentData?.Udi)
-                                {
-                                    blockGridItem = childItem;
-                                    break;
-                                }
-                            }
-                        }
-                    }
+                    return null;
                 }
 
-                if (blockGridItem != null && typedBlockInstance != null)
-                {
-                    typedBlockInstance.RowSpan = blockGridItem.RowSpan;
-                    typedBlockInstance.ColumnSpan = blockGridItem.ColumnSpan;
-                    typedBlockInstance.AreaGridColumns = blockGridItem.AreaGridColumns;
-                    typedBlockInstance.GridColumns = blockGridItem.GridColumns;
-                    typedBlockInstance.Areas = blockGridItem.Areas;
-                }
-            }
+                var items = area.Items.Select(item => new BlockGridItem(item.ContentUdi, null, item.SettingsUdi, null)).ToList();
+                return new BlockGridArea(items, areaConfig.Alias!, areaConfig.RowSpan!.Value, areaConfig.ColumnSpan!.Value);
+            }).WhereNotNull().ToArray();
+            typedBlockInstance.AreaGridColumns = blockConfig?.AreaGridColumns;
         }
 
         public override ViewDataDictionary CreateViewData(object? typedBlockInstance)
